@@ -1,0 +1,15 @@
+dataset_config:
+  dir: "/home/share/dataset"
+
+train_config:
+  epochs: 10
+  batch_size: 96
+
+result_config:
+  model_dir: "Results/models"
+  graph_dir: "Results/graphs"
+
+train_again:
+  again: False # if it is 1, train again
+  model_dir: "Results/models"
+  graph_dir: "Results/graphs"
