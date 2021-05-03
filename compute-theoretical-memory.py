@@ -4,7 +4,7 @@ import math
 
 # configuration for this code
 im2col = True
-batch_size = 96
+batch_size = 1
 
 
 # memory for weight parameters
@@ -90,14 +90,56 @@ def mem_for_conv_3x3_bn(input_size, ipc, opc, stride):
 
 
 def mem_for_inverted_residual(input_size, ipc, opc, stride, expand_ratio):
-  weight_mem = 0
-  act_mem = 0
+  weight_mem_all = 0
+  act_mem_all = 0
   hidden_dim = int(ipc * expand_ratio)
   if (expand_ratio == 1):
-    weight_mem, act_mem += mem_for_conv()
-
-
+    #1st
+    output_size, weight_mem, act_mem = mem_for_conv(input_size, hidden_dim, hidden_dim, 3, stride, 1)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    output_size, weight_mem, act_mem = mem_for_batchnorm(input_size, hidden_dim)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    output_size, weight_mem, act_mem = mem_for_activation_function(input_size, hidden_dim)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    # 2nd
+    output_size, weight_mem, act_mem = mem_for_conv(input_size, hidden_dim, opc, 1, 1, 0)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    output_size, weight_mem, act_mem = mem_for_batchnorm(input_size, opc)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    return output_size, weight_mem_all, act_mem_all
   else:
+    # 1st
+    output_size, weight_mem, act_mem = mem_for_conv(input_size, ipc, hidden_dim, 1)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    output_size, weight_mem, act_mem = mem_for_batchnorm(input_size, hidden_dim)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    output_size, weight_mem, act_mem = mem_for_activation_function(input_size, hidden_dim)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    # 2nd
+    output_size, weight_mem, act_mem = mem_for_conv(input_size, hidden_dim, hidden_dim, 3, stride, 1)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    output_size, weight_mem, act_mem = mem_for_batchnorm(input_size, hidden_dim)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    output_size, weight_mem, act_mem = mem_for_activation_function(input_size, hidden_dim)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    # 3rd
+    output_size, weight_mem, act_mem = mem_for_conv(input_size, hidden_dim, opc, 1)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    output_size, weight_mem, act_mem = mem_for_batchnorm(input_size, opc)
+    weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+    input_size = output_size
+    return output_size, weight_mem_all, act_mem_all
 
 
 def mem_for_mobilenetv2(n_class=10, mult_width_param=1):
@@ -116,18 +158,22 @@ def mem_for_mobilenetv2(n_class=10, mult_width_param=1):
     [6, 320, 1, 1],
   ]
   # first layer
-  output_size, weight_mem, act_mem = mem_for_conv_3x3_bn(input_size, 3, 32, 2)
+  input_channel = 32
+  output_size, weight_mem, act_mem = mem_for_conv_3x3_bn(input_size, 3, input_channel, 2)
   weight_mem_all += weight_mem
   act_mem_all    += act_mem
   input_size      = output_size
   # bottleneck blocks
-  # for t, c, n, s in self.cfgs:
-  #   output_channel = _make_divisible(c * width_mult, 4 if width_mult == 0.1 else 8)
-  #   for i in range(n):
-  #     layers.append(block(input_channel, output_channel, s if i == 0 else 1, t))
-  #     input_channel = output_channel
+  for t, c, n, s in net_configs:
+    output_channel = _make_divisible(c * mult_width_param, 4 if mult_width_param == 0.1 else 8)
+    for i in range(n):
+      output_size, weight_mem, act_mem = mem_for_inverted_residual(input_size, input_channel, output_channel, s if i == 0 else 1, t)
+      weight_mem_all, act_mem_all = weight_mem_all + weight_mem, act_mem_all + act_mem
+      input_size = output_size
+      input_channel = output_channel
+  # average pooling is no memory
   # last classifier
-  output_channel = _make_divisible(1280 * width_mult, 4 if width_mult == 0.1 else 8) if width_mult > 1.0 else 1280
+  output_channel = _make_divisible(1280 * mult_width_param, 4 if mult_width_param == 0.1 else 8) if mult_width_param > 1.0 else 1280
 
   _, weight_mem, act_mem= mem_for_linear(output_channel, n_class)
   weight_mem_all += weight_mem
@@ -135,7 +181,7 @@ def mem_for_mobilenetv2(n_class=10, mult_width_param=1):
   input_size      = output_size
 
   print("overall memory for mobilenet-v2")
-  print("weight: %d, activation: %d" % (weight_mem_all, act_mem_all))
+  print("weight: %d, activation: %d, ratio (weight/activation): %3f" % (weight_mem_all, act_mem_all, weight_mem_all/act_mem_all))
 
 
 
